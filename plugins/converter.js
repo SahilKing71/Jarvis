@@ -12,6 +12,7 @@ Jarvis - Loki-Xer
 const fs = require('fs');
 const ff = require('fluent-ffmpeg');
 const { Image } = require("node-webpmux");
+const PDFDocument = require('pdfkit');
 const { fromBuffer } = require('file-type');
 const { exec } = require("child_process");
 const axios = require("axios");
@@ -21,24 +22,26 @@ const {
     isPrivate,
     toAudio,
     toVideo,
-    getJson,
-    postJson,
-    AddMp3Meta,
     sendUrl,
-    getBuffer,
     webpToPng,
     webp2mp4,
     setData,
     getData,
-    IronMan,
     translate,
-    extractUrlsFromText,
     makeUrl
 } = require("../lib/");
 const { 
     trim,
-    elevenlabs,
+    getJson,
+    IronMan,
+    postJson,
     removeBg,
+    getBuffer,
+    cropImage,
+    AddMp3Meta,
+    elevenlabs,
+    cropToCircle,
+    extractUrlsFromText,
     createRoundSticker
 } = require("./client/"); 
 const stickerPackNameParts = config.STICKER_PACKNAME.split(";");
@@ -162,13 +165,31 @@ System({
 System({
     pattern: "circle",
     fromMe: isPrivate,
-    desc: "Changes photo to sticker",
+    desc: "Make circle photo or sticker",
     type: "converter",
 }, async (message) => {
    if (!(message.image || message.reply_message.sticker || message.reply_message.image)) return await message.reply("_*Reply to photo or sticker*_");
    if (message.reply_message.isAnimatedSticker) return await message.reply("_Reply to a non-animated sticker message_");
    let media = await message.downloadMediaMessage(message.image ? message : message.quoted ? message.reply_message : null);
+   if(message.image || message.reply_message.image) {
+       return await message.send(await cropToCircle(media), {}, 'image');
+   };
    await message.send(await createRoundSticker(media), { packname: stickerPackNameParts[0], author: stickerPackNameParts[1] }, "sticker");
+});
+
+System({
+    pattern: "crop",
+    fromMe: isPrivate,
+    desc: "crop image or sticker",
+    type: "converter",
+}, async (message) => {
+   if (!(message.image || message.reply_message.sticker || message.reply_message.image)) return await message.reply("_*Reply to photo or sticker*_");
+   if (message.reply_message.isAnimatedSticker) return await message.reply("_Reply to a non-animated sticker message_");
+   if(message.image || message.reply_message.image) {
+       let media = await message.downloadMediaMessage(message.image ? message : message.quoted ? message.reply_message : null);
+       return await message.send(await cropImage(media), {}, 'image');
+   };
+   await message.send(await cropImage(await webpToPng(await message.reply_message.downloadAndSave())), { packname: stickerPackNameParts[0], author: stickerPackNameParts[1] }, "sticker");
 });
 
 System({
@@ -237,7 +258,7 @@ System({
 });
 
 System({
-    pattern: 'doc ?(.*)',
+    pattern: 'doc',
     desc: "convert media to document",
     type: 'converter',
     fromMe: isPrivate
@@ -251,7 +272,7 @@ System({
 });
 
 System({
-  pattern: 'rotate ?(.*)',
+  pattern: 'rotate',
   fromMe: isPrivate,
   desc: 'Rotate image or video in any direction',
   type: 'converter'
@@ -266,16 +287,6 @@ System({
 });
 
 System({
-    pattern: 'tovv ?(.*)',
-    desc: "convert media to view ones",
-    type: 'converter',
-    fromMe: true
-}, async (message, match) => {
-    if (!(message.image && message.video && (message.quoted && (message.reply_message.image || message.reply_message.audio || message.reply_message.video)))) return await message.client.forwardMessage(message.jid, message.image || message.video? message : message.reply_message, { viewOnce: true });
-    await message.reply("_*Reply to an image, video, or audio to make it viewable*_");
-});
-
-System({
     pattern: "url",
     fromMe: isPrivate,
     desc: "make media into url",
@@ -285,6 +296,7 @@ System({
     return await sendUrl(message);
 });
 
+System({pattern:"pdf ?(.*)",fromMe:isPrivate,desc:"Converts image to PDF or text to PDF",type:"tool"},(async(e,t)=>{if(t&&!t.startsWith("send")){let i=t,a="./text.pdf",n=new PDFDocument;return n.pipe(fs.createWriteStream(a)),n.font("Helvetica",12).text(i,50,50,{align:"justify"}),n.end(),void setTimeout((async()=>{await e.reply({url:"./text.pdf"},{mimetype:"application/pdf",fileName:"text.pdf"},"document"),fs.unlinkSync(a)}),4e3)}let i,a="./pdf";if(fs.existsSync(a)||fs.mkdirSync(a),"send"===t)i=!0;else{if(i=!1,!e.reply_message.image)return await e.reply("*Reply to an image or give text*\n_Example: `.pdf hello world`_\nTo get pdf of image use `.pdf send`");{let t=await e.reply_message.downloadAndSaveMedia();if(!fs.existsSync(t))return await e.reply("Error: Downloaded file does not exist.");let i,n=0;do{i=path.join(a,`ironman${0===n?"":n}.jpg`),n++}while(fs.existsSync(i));fs.renameSync(t,i),await e.send(`${fs.readdirSync(a).length} images saved successfully_`)}}if(i){let t=new PDFDocument({autoFirstPage:!1}),i=fs.createWriteStream("./image.pdf");t.pipe(i);let n=fs.readdirSync(a).filter((e=>".jpg"===path.extname(e).toLowerCase()));if(0===n.length)return await e.reply("_No images found to convert to PDF._");n.forEach((e=>{let i=path.join(a,e),n=t.openImage(i);t.addPage({size:[n.width,n.height],margin:0}),t.image(i,0,0,{width:n.width,height:n.height})})),t.end(),setTimeout((async()=>{await e.reply({url:"./image.pdf"},{mimetype:"application/pdf",fileName:"image.pdf"},"document"),fs.rmSync(a,{recursive:!0,force:!0}),setTimeout((()=>fs.unlinkSync("./image.pdf")),4e3)}),4e3)}}));
 
 System({
     pattern: "rbg", 
@@ -332,20 +344,7 @@ System({
 
 
 System({
-    pattern: 'bitly ?(.*)',
-    fromMe: isPrivate,
-    desc: 'Shortern a URL using Bitly',
-    type: 'converter',
-}, async (message, text) => {
-    const longUrl = (await extractUrlsFromText(text || message.reply_message.text))[0];
-    if (!longUrl) return await message.reply('*Please provide a URL to shorten.*');
-    const { result } = await getJson(api + "tools/bitly?q=" + longUrl);
-    await message.send(`*SHORT URL:* ${result.link}`, { quoted: message.data });
-});
-
-
-System({
-  pattern: "trt ?(.*)",
+  pattern: "trt",
   fromMe: isPrivate,
   desc: "change language",
   type: "converter",
